@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+data/raw/*.tsv
+data/raw/*.zip
+data/db/*.db
+
+reports/*.csv
+reports/*.json
+reports/*.txt

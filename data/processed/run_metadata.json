@@ -1,0 +1,6 @@
+{
+  "patent_limit": null,
+  "chunk_size": 25000,
+  "sample_step": 200,
+  "database": "data\\db\\patent_intelligence.db"
+}
