@@ -4,6 +4,12 @@ This project builds a small patent data pipeline with PatentsView granted patent
 
 raw TSV files -> pandas cleaning -> SQLite database -> SQL analysis -> CSV/JSON/console reports
 
+The reporting layer now covers three analytics types:
+
+- Descriptive analytics: rankings, country shares, yearly patent trend tables
+- Diagnostic analytics: year-over-year growth, company concentration, country share movement
+- Predictive analytics: a three-year patent-volume forecast using a recent linear trend model
+
 ## Project layout
 
 - `scripts/build_pipeline.py` cleans the raw files and loads the SQLite database
@@ -51,8 +57,14 @@ After the scripts finish, you should have:
 - `reports/top_inventors.csv`
 - `reports/top_companies.csv`
 - `reports/country_trends.csv`
+- `reports/diagnostic_yearly_growth.csv`
+- `reports/company_concentration.csv`
+- `reports/country_share_diagnostics.csv`
+- `reports/patent_forecast.csv`
 - `reports/report_summary.json`
 - `reports/console_report.txt`
+
+The console and JSON reports include descriptive, diagnostic, and predictive sections. The dashboard also has separate tabs for each analytics type.
 
 ## Dashboard
 

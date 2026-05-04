@@ -4,6 +4,8 @@ SELECT
     i.name,
     COUNT(DISTINCT pi.patent_id) AS patent_count
 FROM patent_inventors pi
+JOIN patents p
+    ON pi.patent_id = p.patent_id
 JOIN inventors i
     ON pi.inventor_id = i.inventor_id
 GROUP BY i.inventor_id, i.name
@@ -16,6 +18,8 @@ SELECT
     c.name,
     COUNT(DISTINCT pc.patent_id) AS patent_count
 FROM patent_companies pc
+JOIN patents p
+    ON pc.patent_id = p.patent_id
 JOIN companies c
     ON pc.company_id = c.company_id
 GROUP BY c.company_id, c.name
@@ -23,14 +27,23 @@ ORDER BY patent_count DESC, c.name
 LIMIT 10;
 
 -- name: q3_top_countries
+WITH country_counts AS (
 SELECT
     i.country,
     COUNT(DISTINCT pi.patent_id) AS patent_count
 FROM patent_inventors pi
+JOIN patents p
+    ON pi.patent_id = p.patent_id
 JOIN inventors i
     ON pi.inventor_id = i.inventor_id
 GROUP BY i.country
-ORDER BY patent_count DESC, i.country
+)
+SELECT
+    country,
+    patent_count,
+    ROUND(1.0 * patent_count / SUM(patent_count) OVER (), 4) AS share
+FROM country_counts
+ORDER BY patent_count DESC, country
 LIMIT 10;
 
 -- name: q4_yearly_trends
@@ -66,6 +79,8 @@ WITH inventor_totals AS (
         i.name,
         COUNT(DISTINCT pi.patent_id) AS patent_count
     FROM patent_inventors pi
+    JOIN patents p
+        ON pi.patent_id = p.patent_id
     JOIN inventors i
         ON pi.inventor_id = i.inventor_id
     GROUP BY i.country, i.inventor_id, i.name
@@ -98,9 +113,61 @@ FROM (
         i.name,
         COUNT(DISTINCT pi.patent_id) AS patent_count
     FROM patent_inventors pi
+    JOIN patents p
+        ON pi.patent_id = p.patent_id
     JOIN inventors i
         ON pi.inventor_id = i.inventor_id
     GROUP BY i.inventor_id, i.name
 )
 ORDER BY inventor_rank, name
 LIMIT 20;
+
+-- name: q8_company_concentration
+WITH company_counts AS (
+    SELECT
+        c.company_id,
+        c.name,
+        COUNT(DISTINCT pc.patent_id) AS patent_count
+    FROM patent_companies pc
+    JOIN patents p
+        ON pc.patent_id = p.patent_id
+    JOIN companies c
+        ON pc.company_id = c.company_id
+    GROUP BY c.company_id, c.name
+)
+SELECT
+    company_id,
+    name,
+    patent_count
+FROM company_counts
+ORDER BY patent_count DESC, name;
+
+-- name: q9_country_yearly_share
+WITH country_year_counts AS (
+    SELECT
+        p.year,
+        i.country,
+        COUNT(DISTINCT pi.patent_id) AS patent_count
+    FROM patent_inventors pi
+    JOIN patents p
+        ON pi.patent_id = p.patent_id
+    JOIN inventors i
+        ON pi.inventor_id = i.inventor_id
+    GROUP BY p.year, i.country
+),
+year_totals AS (
+    SELECT
+        year,
+        SUM(patent_count) AS yearly_country_patents
+    FROM country_year_counts
+    GROUP BY year
+)
+SELECT
+    c.year,
+    c.country,
+    c.patent_count,
+    ROUND(1.0 * c.patent_count / y.yearly_country_patents, 4) AS share
+FROM country_year_counts c
+JOIN year_totals y
+    ON c.year = y.year
+ORDER BY c.year, c.country;
