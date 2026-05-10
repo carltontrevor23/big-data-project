@@ -4,11 +4,13 @@ This project builds a small patent data pipeline with PatentsView granted patent
 
 raw TSV files -> pandas cleaning -> SQLite database -> SQL analysis -> CSV/JSON/console reports
 
-The reporting layer now covers three analytics types:
+The reporting layer now covers three analytics types plus the supervisor-requested patent metrics:
 
 - Descriptive analytics: rankings, country shares, yearly patent trend tables
 - Diagnostic analytics: year-over-year growth, company concentration, country share movement
 - Predictive analytics: a three-year patent-volume forecast using a recent linear trend model
+- Patent processing and weight analytics: pipeline processing time, claim-based patent weight,
+  dependency counts, and distribution changes over time
 
 ## Project layout
 
@@ -18,7 +20,7 @@ The reporting layer now covers three analytics types:
 - `sql/schema.sql` creates the tables
 - `sql/queries.sql` stores the analysis queries
 - `data/processed/` keeps the cleaned CSV files
-- `data/db/patent_intelligence.db` is the SQLite database
+- `data/db/patent_intelligence.db` is the SQLite database, including patent metrics and run timing
 - `reports/` contains the exported report files
 
 ## Raw files used
@@ -61,10 +63,37 @@ After the scripts finish, you should have:
 - `reports/company_concentration.csv`
 - `reports/country_share_diagnostics.csv`
 - `reports/patent_forecast.csv`
+- `reports/processing_time.csv`
+- `reports/patent_weight_distribution.csv`
+- `reports/top_weighted_patents.csv`
+- `reports/dependency_distribution.csv`
+- `reports/type_distribution_over_time.csv`
 - `reports/report_summary.json`
 - `reports/console_report.txt`
 
-The console and JSON reports include descriptive, diagnostic, and predictive sections. The dashboard also has separate tabs for each analytics type.
+The console and JSON reports include descriptive, diagnostic, predictive, processing-time,
+dependency, distribution, and patent-weight sections. The dashboard also has separate tabs for
+each analytics type.
+
+## Supervisor metrics
+
+- **How long it takes to process patents:** the pipeline records end-to-end cleaning and SQLite
+  loading time in the `pipeline_runs` table and exports it to `reports/processing_time.csv`.
+- **Dependencies:** each patent gets inventor count, company count, and total dependency count in
+  the `patent_metrics` table. In this version, dependencies mean linked inventors plus linked
+  companies because citation/reference raw files are not present in `data/raw/`.
+- **Weight of patent:** each patent receives a simple weight score:
+  `num_claims + 0.10 * title_word_count + 0.01 * abstract_word_count`.
+  This uses available fields from `g_patent.tsv` and `g_patent_abstract.tsv`.
+- **How the distribution changes over time:** yearly reports show patent count, average weight,
+  average claims, average dependencies, patent type shares, and dependency-count distributions.
+- **Store in a DB:** all cleaned records and derived metrics are stored in
+  `data/db/patent_intelligence.db`.
+
+True patent office processing time, meaning application filing date to grant date, requires an
+application-date file such as PatentsView `g_application.tsv`. The current raw files include grant
+date but not application filing date, so that metric is documented as a future enhancement once the
+extra source file is added.
 
 ## Dashboard
 

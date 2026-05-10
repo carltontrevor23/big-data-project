@@ -10,3 +10,4 @@ data/db/*.db
 reports/*.csv
 reports/*.json
 reports/*.txt
+data/processed/clean_patents.csv

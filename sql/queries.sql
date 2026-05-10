@@ -171,3 +171,68 @@ FROM country_year_counts c
 JOIN year_totals y
     ON c.year = y.year
 ORDER BY c.year, c.country;
+
+-- name: q10_processing_time
+SELECT
+    run_id,
+    run_finished_at,
+    processing_seconds,
+    ROUND(processing_seconds / 60.0, 2) AS processing_minutes,
+    notes
+FROM pipeline_runs
+ORDER BY run_id DESC
+LIMIT 5;
+
+-- name: q11_patent_weight_distribution
+SELECT
+    p.year,
+    COUNT(*) AS patent_count,
+    ROUND(AVG(pm.patent_weight), 2) AS avg_patent_weight,
+    ROUND(AVG(pm.claim_count), 2) AS avg_claim_count,
+    ROUND(AVG(pm.dependency_count), 2) AS avg_dependencies,
+    MAX(pm.patent_weight) AS max_patent_weight
+FROM patent_metrics pm
+JOIN patents p
+    ON pm.patent_id = p.patent_id
+GROUP BY p.year
+ORDER BY p.year;
+
+-- name: q12_top_weighted_patents
+SELECT
+    p.patent_id,
+    p.title,
+    p.year,
+    p.patent_type,
+    pm.claim_count,
+    pm.inventor_count,
+    pm.company_count,
+    pm.dependency_count,
+    pm.title_word_count,
+    pm.abstract_word_count,
+    pm.patent_weight
+FROM patent_metrics pm
+JOIN patents p
+    ON pm.patent_id = p.patent_id
+ORDER BY pm.patent_weight DESC, p.year DESC, p.patent_id
+LIMIT 20;
+
+-- name: q13_dependency_distribution
+SELECT
+    p.year,
+    pm.dependency_count,
+    COUNT(*) AS patent_count
+FROM patent_metrics pm
+JOIN patents p
+    ON pm.patent_id = p.patent_id
+GROUP BY p.year, pm.dependency_count
+ORDER BY p.year, pm.dependency_count;
+
+-- name: q14_type_distribution_over_time
+SELECT
+    year,
+    COALESCE(NULLIF(patent_type, ''), 'Unknown') AS patent_type,
+    COUNT(*) AS patent_count,
+    ROUND(1.0 * COUNT(*) / SUM(COUNT(*)) OVER (PARTITION BY year), 4) AS yearly_share
+FROM patents
+GROUP BY year, COALESCE(NULLIF(patent_type, ''), 'Unknown')
+ORDER BY year, patent_type;

@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import argparse
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -15,7 +14,7 @@ DB_DIR = ROOT / "data" / "db"
 SQL_DIR = ROOT / "sql"
 
 
-def normalise_text(series: pd.Series) -> pd.Series:
+def normalise_text(series):
     return (
         series.fillna("")
         .astype(str)
@@ -24,11 +23,19 @@ def normalise_text(series: pd.Series) -> pd.Series:
     )
 
 
-def write_chunk(frame: pd.DataFrame, path: Path, first_chunk: bool) -> None:
-    frame.to_csv(path, index=False, mode="w" if first_chunk else "a", header=first_chunk)
+def word_count(series):
+    return normalise_text(series).str.split().str.len().fillna(0).astype(int)
 
 
-def load_selected_ids_from_clean_patents() -> set[str]:
+def write_chunk(frame, path, first_chunk):
+    if first_chunk:
+        mode = "w"
+    else:
+        mode = "a"
+    frame.to_csv(path, index=False, mode=mode, header=first_chunk)
+
+
+def load_selected_ids_from_clean_patents():
     patent_file = PROCESSED_DIR / "clean_patents.csv"
     if not patent_file.exists():
         raise FileNotFoundError("clean_patents.csv was not found in data/processed")
@@ -36,7 +43,7 @@ def load_selected_ids_from_clean_patents() -> set[str]:
     return set(patents["patent_id"].dropna().astype(str))
 
 
-def deduplicate_clean_file(path: Path, subset: list[str]) -> None:
+def deduplicate_clean_file(path, subset):
     if not path.exists():
         return
     frame = pd.read_csv(path, dtype=str, low_memory=False)
@@ -44,13 +51,69 @@ def deduplicate_clean_file(path: Path, subset: list[str]) -> None:
     frame.to_csv(path, index=False)
 
 
-def build_location_lookup() -> dict[str, str]:
+def ensure_clean_patent_metrics(path):
+    if not path.exists():
+        return
+
+    required_columns = {
+        "patent_id",
+        "title",
+        "abstract",
+        "grant_date",
+        "year",
+        "patent_type",
+        "num_claims",
+        "title_word_count",
+        "abstract_word_count",
+        "patent_weight",
+    }
+    existing_columns = set(pd.read_csv(path, nrows=0).columns)
+    if required_columns.issubset(existing_columns):
+        return
+
+    frame = pd.read_csv(path, dtype=str, low_memory=False)
+    changed = False
+
+    if "grant_date" not in frame.columns and "filing_date" in frame.columns:
+        frame = frame.rename(columns={"filing_date": "grant_date"})
+        changed = True
+
+    if "patent_type" not in frame.columns:
+        frame["patent_type"] = ""
+        changed = True
+
+    if "num_claims" not in frame.columns:
+        frame["num_claims"] = 0
+        changed = True
+
+    if "title_word_count" not in frame.columns:
+        frame["title_word_count"] = word_count(frame["title"])
+        changed = True
+
+    if "abstract_word_count" not in frame.columns:
+        frame["abstract_word_count"] = word_count(frame["abstract"])
+        changed = True
+
+    if "patent_weight" not in frame.columns:
+        claims = pd.to_numeric(frame["num_claims"], errors="coerce").fillna(0)
+        title_words = pd.to_numeric(frame["title_word_count"], errors="coerce").fillna(0)
+        abstract_words = pd.to_numeric(frame["abstract_word_count"], errors="coerce").fillna(0)
+        frame["patent_weight"] = (claims + (title_words * 0.10) + (abstract_words * 0.01)).round(2)
+        changed = True
+
+    if changed:
+        frame.to_csv(path, index=False)
+
+
+def build_location_lookup():
     location_file = RAW_DIR / "g_location_disambiguated.tsv"
     if not location_file.exists():
         return {}
 
     sample = pd.read_csv(location_file, sep="\t", nrows=5, dtype=str, low_memory=False)
-    columns = {column.lower(): column for column in sample.columns}
+    columns = {}
+    for column in sample.columns:
+        columns[column.lower()] = column
 
     location_key = columns.get("location_id")
     country_key = None
@@ -62,7 +125,7 @@ def build_location_lookup() -> dict[str, str]:
     if not location_key or not country_key:
         return {}
 
-    lookup: dict[str, str] = {}
+    lookup = {}
     for chunk in pd.read_csv(
         location_file,
         sep="\t",
@@ -84,14 +147,17 @@ def build_location_lookup() -> dict[str, str]:
     return lookup
 
 
-def process_patents(limit: int | None, chunk_size: int, sample_step: int | None) -> set[str] | None:
+def process_patents(limit, chunk_size, sample_step):
     patent_file = RAW_DIR / "g_patent.tsv"
     abstract_file = RAW_DIR / "g_patent_abstract.tsv"
     output_file = PROCESSED_DIR / "clean_patents.csv"
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-    selected_ids: set[str] | None = set() if limit is not None else None
+    if limit is None:
+        selected_ids = None
+    else:
+        selected_ids = set()
     written = 0
     first_chunk = True
     patent_position = 0
@@ -128,6 +194,17 @@ def process_patents(limit: int | None, chunk_size: int, sample_step: int | None)
         merged["patent_title"] = normalise_text(merged["patent_title"])
         merged["patent_abstract"] = normalise_text(merged["patent_abstract"])
         merged["patent_date"] = normalise_text(merged["patent_date"])
+        if "patent_type" in merged.columns:
+            merged["patent_type"] = normalise_text(merged["patent_type"])
+        else:
+            merged["patent_type"] = ""
+
+        if "num_claims" in merged.columns:
+            merged["num_claims"] = pd.to_numeric(
+                merged["num_claims"], errors="coerce"
+            ).fillna(0)
+        else:
+            merged["num_claims"] = 0
         merged = merged[merged["patent_title"] != ""]
         merged = merged[merged["patent_date"] != ""]
 
@@ -136,13 +213,33 @@ def process_patents(limit: int | None, chunk_size: int, sample_step: int | None)
         ).astype("Int64")
         merged = merged.dropna(subset=["year"])
 
+        merged["title_word_count"] = word_count(merged["patent_title"])
+        merged["abstract_word_count"] = word_count(merged["patent_abstract"])
+        merged["patent_weight"] = (
+            merged["num_claims"]
+            + (merged["title_word_count"] * 0.10)
+            + (merged["abstract_word_count"] * 0.01)
+        ).round(2)
+
         cleaned = merged.loc[
-            :, ["patent_id", "patent_title", "patent_abstract", "patent_date", "year"]
+            :,
+            [
+                "patent_id",
+                "patent_title",
+                "patent_abstract",
+                "patent_date",
+                "year",
+                "patent_type",
+                "num_claims",
+                "title_word_count",
+                "abstract_word_count",
+                "patent_weight",
+            ],
         ].rename(
             columns={
                 "patent_title": "title",
                 "patent_abstract": "abstract",
-                "patent_date": "filing_date",
+                "patent_date": "grant_date",
             }
         )
 
@@ -181,12 +278,12 @@ def process_patents(limit: int | None, chunk_size: int, sample_step: int | None)
     return selected_ids
 
 
-def process_inventors(selected_ids: set[str] | None, chunk_size: int, country_lookup: dict[str, str]) -> None:
+def process_inventors(selected_ids, chunk_size, country_lookup):
     inventor_file = RAW_DIR / "g_inventor_disambiguated.tsv"
     inventors_output = PROCESSED_DIR / "clean_inventors.csv"
     patent_inventors_output = PROCESSED_DIR / "clean_patent_inventors.csv"
 
-    seen_inventors: set[str] = set()
+    seen_inventors = set()
     first_inventor_chunk = True
     first_link_chunk = True
     inventor_rows = 0
@@ -243,12 +340,12 @@ def process_inventors(selected_ids: set[str] | None, chunk_size: int, country_lo
     print(f"inventors: finished with {inventor_rows:,} unique inventors")
 
 
-def process_companies(selected_ids: set[str] | None, chunk_size: int) -> None:
+def process_companies(selected_ids, chunk_size):
     assignee_file = RAW_DIR / "g_assignee_disambiguated.tsv"
     companies_output = PROCESSED_DIR / "clean_companies.csv"
     patent_companies_output = PROCESSED_DIR / "clean_patent_companies.csv"
 
-    seen_companies: set[str] = set()
+    seen_companies = set()
     first_company_chunk = True
     first_link_chunk = True
     company_rows = 0
@@ -311,12 +408,12 @@ def process_companies(selected_ids: set[str] | None, chunk_size: int) -> None:
     print(f"companies: finished with {company_rows:,} unique companies")
 
 
-def load_csv_to_table(conn: sqlite3.Connection, csv_path: Path, table_name: str, chunk_size: int) -> None:
+def load_csv_to_table(conn, csv_path, table_name, chunk_size):
     for chunk in pd.read_csv(csv_path, chunksize=chunk_size, dtype=str, low_memory=False):
         chunk.to_sql(table_name, conn, if_exists="append", index=False)
 
 
-def build_database(chunk_size: int) -> Path:
+def build_database(chunk_size, processing_seconds):
     DB_DIR.mkdir(parents=True, exist_ok=True)
     db_path = DB_DIR / "patent_intelligence.db"
 
@@ -325,7 +422,12 @@ def build_database(chunk_size: int) -> Path:
 
     conn = sqlite3.connect(db_path)
     try:
-        deduplicate_clean_file(PROCESSED_DIR / "clean_patents.csv", ["patent_id"])
+        conn.execute("PRAGMA journal_mode = OFF")
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA cache_size = -200000")
+
+        ensure_clean_patent_metrics(PROCESSED_DIR / "clean_patents.csv")
         deduplicate_clean_file(PROCESSED_DIR / "clean_inventors.csv", ["inventor_id"])
         deduplicate_clean_file(PROCESSED_DIR / "clean_companies.csv", ["company_id"])
         deduplicate_clean_file(
@@ -360,6 +462,43 @@ def build_database(chunk_size: int) -> Path:
                 ON pi.patent_id = pc.patent_id;
             """
         )
+        conn.executescript(
+            """
+            INSERT INTO patent_metrics (
+                patent_id,
+                inventor_count,
+                company_count,
+                dependency_count,
+                claim_count,
+                title_word_count,
+                abstract_word_count,
+                patent_weight
+            )
+            SELECT
+                p.patent_id,
+                COALESCE(i.inventor_count, 0) AS inventor_count,
+                COALESCE(c.company_count, 0) AS company_count,
+                COALESCE(i.inventor_count, 0) + COALESCE(c.company_count, 0) AS dependency_count,
+                COALESCE(CAST(p.num_claims AS INTEGER), 0) AS claim_count,
+                COALESCE(CAST(p.title_word_count AS INTEGER), 0) AS title_word_count,
+                COALESCE(CAST(p.abstract_word_count AS INTEGER), 0) AS abstract_word_count,
+                COALESCE(CAST(p.patent_weight AS REAL), 0.0) AS patent_weight
+            FROM patents p
+            LEFT JOIN (
+                SELECT patent_id, COUNT(DISTINCT inventor_id) AS inventor_count
+                FROM patent_inventors
+                GROUP BY patent_id
+            ) i ON p.patent_id = i.patent_id
+            LEFT JOIN (
+                SELECT patent_id, COUNT(DISTINCT company_id) AS company_count
+                FROM patent_companies
+                GROUP BY patent_id
+            ) c ON p.patent_id = c.patent_id;
+
+            INSERT INTO pipeline_runs (run_finished_at, processing_seconds, notes)
+            VALUES (datetime('now'), ROUND(%f, 2), 'End-to-end cleaning and SQLite loading time');
+            """ % processing_seconds
+        )
 
         relationships = pd.read_sql_query(
             "SELECT patent_id, inventor_id, company_id FROM relationships", conn
@@ -372,19 +511,21 @@ def build_database(chunk_size: int) -> Path:
     return db_path
 
 
-def write_run_metadata(limit: int | None, chunk_size: int, sample_step: int | None, db_path: Path) -> None:
+def write_run_metadata(limit, chunk_size, sample_step, db_path, processing_seconds):
     metadata = {
         "patent_limit": limit,
         "chunk_size": chunk_size,
         "sample_step": sample_step,
         "database": str(db_path.relative_to(ROOT)),
+        "processing_seconds": round(processing_seconds, 2),
     }
     (PROCESSED_DIR / "run_metadata.json").write_text(
         json.dumps(metadata, indent=2), encoding="utf-8"
     )
 
 
-def main() -> None:
+def main():
+    started_at = time.perf_counter()
     parser = argparse.ArgumentParser(description="Clean patent data and load it into SQLite.")
     parser.add_argument(
         "--patent-limit",
@@ -441,8 +582,15 @@ def main() -> None:
         process_companies(selected_ids, args.chunk_size)
 
     if not args.skip_db:
-        db_path = build_database(args.chunk_size)
-        write_run_metadata(args.patent_limit, args.chunk_size, args.sample_step, db_path)
+        processing_seconds = time.perf_counter() - started_at
+        db_path = build_database(args.chunk_size, processing_seconds)
+        write_run_metadata(
+            args.patent_limit,
+            args.chunk_size,
+            args.sample_step,
+            db_path,
+            processing_seconds,
+        )
         print(f"database: saved to {db_path}")
 
 

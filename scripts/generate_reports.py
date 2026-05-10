@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import sqlite3
 from pathlib import Path
@@ -14,18 +12,21 @@ REPORTS_DIR = ROOT / "reports"
 SQL_DIR = ROOT / "sql"
 
 
-def fetch_query(conn: sqlite3.Connection, sql: str) -> pd.DataFrame:
+def fetch_query(conn, sql):
     return pd.read_sql_query(sql, conn)
 
 
-def add_share(frame: pd.DataFrame, count_column: str, share_column: str = "share") -> pd.DataFrame:
+def add_share(frame, count_column, share_column="share"):
     total = frame[count_column].sum()
     frame = frame.copy()
-    frame[share_column] = 0.0 if total == 0 else (frame[count_column] / total).round(4)
+    if total == 0:
+        frame[share_column] = 0.0
+    else:
+        frame[share_column] = (frame[count_column] / total).round(4)
     return frame
 
 
-def build_yearly_diagnostics(yearly_trends: pd.DataFrame) -> pd.DataFrame:
+def build_yearly_diagnostics(yearly_trends):
     diagnostics = yearly_trends.copy()
     diagnostics["previous_year_patents"] = diagnostics["patent_count"].shift(1)
     diagnostics["yoy_change"] = diagnostics["patent_count"] - diagnostics["previous_year_patents"]
@@ -40,7 +41,7 @@ def build_yearly_diagnostics(yearly_trends: pd.DataFrame) -> pd.DataFrame:
     return diagnostics
 
 
-def build_patent_forecast(yearly_trends: pd.DataFrame, years_ahead: int = 3) -> pd.DataFrame:
+def build_patent_forecast(yearly_trends, years_ahead=3):
     recent_years = yearly_trends.tail(10).copy()
     if len(recent_years) < 2:
         return pd.DataFrame(columns=["year", "predicted_patents", "model", "trend_slope"])
@@ -61,7 +62,7 @@ def build_patent_forecast(yearly_trends: pd.DataFrame, years_ahead: int = 3) -> 
     )
 
 
-def classify_growth(rate: float) -> str:
+def classify_growth(rate):
     if rate >= 0.10:
         return "rapid growth"
     if rate >= 0.03:
@@ -73,10 +74,18 @@ def classify_growth(rate: float) -> str:
     return "stable"
 
 
-def load_queries() -> dict[str, str]:
-    queries: dict[str, str] = {}
+def concentration_band(share):
+    if share <= 0.01:
+        return "fragmented"
+    if share <= 0.05:
+        return "meaningful"
+    return "dominant"
+
+
+def load_queries():
+    queries = {}
     current_name = None
-    current_lines: list[str] = []
+    current_lines = []
 
     for line in (SQL_DIR / "queries.sql").read_text(encoding="utf-8").splitlines():
         if line.startswith("-- name:"):
@@ -93,7 +102,7 @@ def load_queries() -> dict[str, str]:
     return queries
 
 
-def main() -> None:
+def main():
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     queries = load_queries()
 
@@ -113,15 +122,18 @@ def main() -> None:
             fetch_query(conn, queries["q8_company_concentration"]), "patent_count"
         )
         country_yearly_share = fetch_query(conn, queries["q9_country_yearly_share"])
+        processing_time = fetch_query(conn, queries["q10_processing_time"])
+        patent_weight_distribution = fetch_query(conn, queries["q11_patent_weight_distribution"])
+        top_weighted_patents = fetch_query(conn, queries["q12_top_weighted_patents"])
+        dependency_distribution = fetch_query(conn, queries["q13_dependency_distribution"])
+        type_distribution = fetch_query(conn, queries["q14_type_distribution_over_time"])
 
         yearly_diagnostics = build_yearly_diagnostics(yearly_trends)
         patent_forecast = build_patent_forecast(yearly_trends)
         company_concentration["cumulative_share"] = company_concentration["share"].cumsum().round(4)
-        company_concentration["concentration_band"] = pd.cut(
-            company_concentration["share"],
-            bins=[-0.01, 0.01, 0.05, 1.0],
-            labels=["fragmented", "meaningful", "dominant"],
-        ).astype(str)
+        company_concentration["concentration_band"] = company_concentration["share"].apply(
+            concentration_band
+        )
         country_yearly_share["share_growth_rate"] = (
             country_yearly_share.groupby("country")["share"].pct_change()
         ).replace([np.inf, -np.inf], np.nan)
@@ -130,6 +142,12 @@ def main() -> None:
         )
         country_yearly_share["diagnosis"] = country_yearly_share["share_growth_rate"].apply(
             classify_growth
+        )
+        patent_weight_distribution["avg_weight_change"] = (
+            patent_weight_distribution["avg_patent_weight"].diff().fillna(0).round(2)
+        )
+        patent_weight_distribution["avg_dependency_change"] = (
+            patent_weight_distribution["avg_dependencies"].diff().fillna(0).round(2)
         )
 
         top_inventors_report = top_inventors.rename(columns={"patent_count": "patents"})
@@ -146,8 +164,16 @@ def main() -> None:
         company_concentration.to_csv(REPORTS_DIR / "company_concentration.csv", index=False)
         country_yearly_share.to_csv(REPORTS_DIR / "country_share_diagnostics.csv", index=False)
         patent_forecast.to_csv(REPORTS_DIR / "patent_forecast.csv", index=False)
+        processing_time.to_csv(REPORTS_DIR / "processing_time.csv", index=False)
+        patent_weight_distribution.to_csv(
+            REPORTS_DIR / "patent_weight_distribution.csv", index=False
+        )
+        top_weighted_patents.to_csv(REPORTS_DIR / "top_weighted_patents.csv", index=False)
+        dependency_distribution.to_csv(REPORTS_DIR / "dependency_distribution.csv", index=False)
+        type_distribution.to_csv(REPORTS_DIR / "type_distribution_over_time.csv", index=False)
 
         latest_growth = yearly_diagnostics.iloc[-1]
+        latest_weight = patent_weight_distribution.iloc[-1]
         latest_country_year = country_yearly_share[
             country_yearly_share["year"] == country_yearly_share["year"].max()
         ]
@@ -171,10 +197,17 @@ def main() -> None:
                 "latest_year": int(latest_growth["year"]),
                 "latest_yoy_growth_rate": float(latest_growth["yoy_growth_rate"]),
                 "latest_yoy_change": int(latest_growth["yoy_change"]),
+                "latest_avg_patent_weight": float(latest_weight["avg_patent_weight"]),
+                "latest_avg_dependencies": float(latest_weight["avg_dependencies"]),
                 "top_5_company_share": top_5_company_share,
                 "company_hhi": hhi,
                 "fastest_recent_country_share_growth": fastest_country.to_dict(orient="records"),
             },
+            "processing_time": processing_time.to_dict(orient="records"),
+            "patent_weight_distribution": patent_weight_distribution.to_dict(orient="records"),
+            "top_weighted_patents": top_weighted_patents.to_dict(orient="records"),
+            "dependency_distribution": dependency_distribution.to_dict(orient="records"),
+            "type_distribution_over_time": type_distribution.to_dict(orient="records"),
             "predictive_forecast": patent_forecast.to_dict(orient="records"),
             "cte_result": cte_result.to_dict(orient="records"),
         }
@@ -216,6 +249,10 @@ def main() -> None:
                 "Diagnostic Analytics:",
                 f"- Latest year-over-year change ({int(latest_growth['year'])}): "
                 f"{int(latest_growth['yoy_change']):+,} patents ({latest_growth_rate:.2f}%).",
+                f"- Latest average patent weight ({int(latest_weight['year'])}): "
+                f"{float(latest_weight['avg_patent_weight']):.2f}.",
+                f"- Latest average dependencies ({int(latest_weight['year'])}): "
+                f"{float(latest_weight['avg_dependencies']):.2f}.",
                 f"- Top 5 company share: {top_5_company_share * 100:.2f}%.",
                 f"- Company concentration index (HHI): {hhi:.4f}.",
             ]
@@ -234,6 +271,24 @@ def main() -> None:
                 f"({row['model']})"
             )
 
+        if not processing_time.empty:
+            latest_run = processing_time.iloc[0]
+            report_lines.extend(
+                [
+                    "",
+                    "Processing Time:",
+                    f"- Latest pipeline run: {float(latest_run['processing_seconds']):.2f} seconds "
+                    f"({float(latest_run['processing_minutes']):.2f} minutes).",
+                ]
+            )
+
+        report_lines.extend(["", "Top Weighted Patents:"])
+        for idx, row in top_weighted_patents.head(5).iterrows():
+            report_lines.append(
+                f"{idx + 1}. {row['patent_id']} - weight {float(row['patent_weight']):.2f}, "
+                f"{int(row['claim_count'])} claims, {int(row['dependency_count'])} dependencies"
+            )
+
         report_lines.extend(
             [
                 "",
@@ -245,6 +300,11 @@ def main() -> None:
                 "- reports/company_concentration.csv",
                 "- reports/country_share_diagnostics.csv",
                 "- reports/patent_forecast.csv",
+                "- reports/processing_time.csv",
+                "- reports/patent_weight_distribution.csv",
+                "- reports/top_weighted_patents.csv",
+                "- reports/dependency_distribution.csv",
+                "- reports/type_distribution_over_time.csv",
                 "- reports/report_summary.json",
                 "- reports/console_report.txt",
             ]
