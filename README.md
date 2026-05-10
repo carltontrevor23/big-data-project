@@ -37,16 +37,13 @@ Activate the virtual environment and run:
 
 ```powershell
 .\venv\Scripts\Activate.ps1
-python .\scripts\build_pipeline.py 
+python .\scripts\build_pipeline.py
 python .\scripts\generate_reports.py
 ```
 
-If you want to process the full dataset, leave out both `--patent-limit` and `--sample-step`.
-If you want a smaller test run, use `--patent-limit`.
-
 ## Outputs
 
-After the scripts finish, you should have:
+After the scripts finish, the project will contain the following files:
 
 - `data/processed/clean_patents.csv`
 - `data/processed/clean_inventors.csv`
@@ -68,33 +65,12 @@ After the scripts finish, you should have:
 - `reports/report_summary.json`
 - `reports/console_report.txt`
 
-The console and JSON reports include descriptive, diagnostic, predictive, processing-time,
-dependency, distribution, and patent-weight sections. The dashboard also has separate tabs for
-each analytics type.
+The console and JSON reports include descriptive, diagnostic, predictive, processing-time, dependency, distribution, and patent-weight sections. 
+The dashboard also has separate tabs for each analytics type.
 
-## Supervisor metrics
+## Streamlit Dashboard
 
-- **How long it takes to process patents:** the pipeline records end-to-end cleaning and SQLite
-  loading time in the `pipeline_runs` table and exports it to `reports/processing_time.csv`.
-- **Dependencies:** each patent gets inventor count, company count, and total dependency count in
-  the `patent_metrics` table. In this version, dependencies mean linked inventors plus linked
-  companies because citation/reference raw files are not present in `data/raw/`.
-- **Weight of patent:** each patent receives a simple weight score:
-  `num_claims + 0.10 * title_word_count + 0.01 * abstract_word_count`.
-  This uses available fields from `g_patent.tsv` and `g_patent_abstract.tsv`.
-- **How the distribution changes over time:** yearly reports show patent count, average weight,
-  average claims, average dependencies, patent type shares, and dependency-count distributions.
-- **Store in a DB:** all cleaned records and derived metrics are stored in
-  `data/db/patent_intelligence.db`.
-
-True patent office processing time, meaning application filing date to grant date, requires an
-application-date file such as PatentsView `g_application.tsv`. The current raw files include grant
-date but not application filing date, so that metric is documented as a future enhancement once the
-extra source file is added.
-
-## Dashboard
-
-If you want to view the project in a small dashboard, install Streamlit in the same virtual environment:
+If you want to view the project in a simple dashboard, install Streamlit in the same virtual environment:
 
 ```powershell
 python -m pip install streamlit
@@ -108,7 +84,7 @@ python -m streamlit run .\dashboard.py
 
 Streamlit will show a local address in the terminal, usually `http://localhost:8501`.
 
-## Notes
+## Please note
 
 - The patent file and abstract file are processed in chunks so the project can run on a normal laptop.
 - The relationship table links each patent-inventor pair with the primary assignee for that patent.
