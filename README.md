@@ -2,15 +2,14 @@
 
 This project builds a small patent data pipeline with PatentsView granted patent files. The flow is:
 
-raw TSV files -> pandas cleaning -> SQLite database -> SQL analysis -> CSV/JSON/console reports
+raw TSV files -> Data cleaning using pandas  -> SQLite database -> SQL analysis -> CSV/JSON/console reports
 
-The reporting layer now covers three analytics types plus the supervisor-requested patent metrics:
+The reporting layer covers three analytics types in addition to the patent metrics:
 
 - Descriptive analytics: rankings, country shares, yearly patent trend tables
 - Diagnostic analytics: year-over-year growth, company concentration, country share movement
 - Predictive analytics: a three-year patent-volume forecast using a recent linear trend model
-- Patent processing and weight analytics: pipeline processing time, claim-based patent weight,
-  dependency counts, and distribution changes over time
+- Patent processing and weight analytics: pipeline processing time, claim-based patent weight, dependency counts, and distribution changes over time
 
 ## Project layout
 
@@ -25,22 +24,20 @@ The reporting layer now covers three analytics types plus the supervisor-request
 
 ## Raw files used
 
-Place the raw PatentsView files in `data/raw/`:
+The raw PatentsView files in `data/raw/`:
 
 - `g_patent.tsv`
 - `g_patent_abstract.tsv`
 - `g_inventor_disambiguated.tsv`
 - `g_assignee_disambiguated.tsv`
 
-If `g_location_disambiguated.tsv` is also present, the pipeline will use it to fill inventor countries. If it is missing, inventor country is stored as `Unknown`.
-
-## How to run
+## How to run the scripts
 
 Activate the virtual environment and run:
 
 ```powershell
 .\venv\Scripts\Activate.ps1
-python .\scripts\build_pipeline.py --sample-step 150
+python .\scripts\build_pipeline.py 
 python .\scripts\generate_reports.py
 ```
 
